@@ -41,6 +41,60 @@ app.get('/api/instagram/:username', async (req, res) => {
   
   let browser;
   try {
+    // MÉTODO 1: Tentar API interna do Instagram (mais confiável)
+    console.log('🔄 Tentando API interna do Instagram...');
+    try {
+      const https = require('https');
+      const apiUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`;
+      
+      const apiResponse = await new Promise((resolve, reject) => {
+        const options = {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'X-IG-App-ID': '936619743392459',
+            'Accept': '*/*'
+          }
+        };
+        
+        https.get(apiUrl, options, (response) => {
+          let data = '';
+          response.on('data', chunk => data += chunk);
+          response.on('end', () => {
+            if (response.statusCode === 200) {
+              resolve(JSON.parse(data));
+            } else {
+              reject(new Error(`API retornou ${response.statusCode}`));
+            }
+          });
+        }).on('error', reject);
+      });
+      
+      if (apiResponse?.data?.user?.edge_owner_to_timeline_media?.edges?.length > 0) {
+        const edges = apiResponse.data.user.edge_owner_to_timeline_media.edges;
+        const posts = edges.slice(0, 3).map(edge => ({
+          shortcode: edge.node.shortcode,
+          media_url: edge.node.display_url || edge.node.thumbnail_src,
+          permalink: `https://www.instagram.com/p/${edge.node.shortcode}/`,
+          caption: edge.node.edge_media_to_caption?.edges[0]?.node?.text || 'Post do Instagram',
+          timestamp: new Date(edge.node.taken_at_timestamp * 1000).toISOString()
+        }));
+        
+        const response = {
+          success: true,
+          post: posts[0],
+          allPosts: posts,
+          source: 'Instagram API'
+        };
+        
+        cache.set(cacheKey, { data: response, timestamp: Date.now() });
+        console.log(`✅ Posts encontrados via API para @${username}`);
+        return res.json(response);
+      }
+    } catch (apiError) {
+      console.log(`⚠️ API falhou: ${apiError.message}, tentando scraping...`);
+    }
+    
+    // MÉTODO 2: Scraping com Playwright (fallback)
     browser = await chromium.launch({
       headless: true,
       args: [
