@@ -75,6 +75,20 @@ app.get('/api/instagram/:username', async (req, res) => {
     
     console.log(`📊 Tentando extrair dados da página...`);
     
+    // Debug: verificar estrutura HTML
+    const pageStructure = await page.evaluate(() => {
+      return {
+        hasArticle: !!document.querySelector('article'),
+        hasMain: !!document.querySelector('main'),
+        hasLinks: document.querySelectorAll('a').length,
+        hasImages: document.querySelectorAll('img').length,
+        title: document.title,
+        bodyText: document.body.innerText.substring(0, 500)
+      };
+    });
+    
+    console.log('🔍 Estrutura da página:', pageStructure);
+    
     // Tentar extrair dados do script JSON do Instagram
     const jsonData = await page.evaluate(() => {
       const scripts = document.querySelectorAll('script[type="application/ld+json"]');
@@ -97,13 +111,23 @@ app.get('/api/instagram/:username', async (req, res) => {
     
     console.log(`📦 Dados JSON extraídos:`, jsonData ? 'Sim' : 'Não');
     
+    // Debug: screenshot para análise
+    try {
+      await page.screenshot({ path: 'debug-instagram.png', fullPage: false });
+      console.log('📸 Screenshot salvo em debug-instagram.png');
+    } catch (e) {
+      console.log('⚠️ Não foi possível salvar screenshot');
+    }
+    
     // Tentar múltiplos seletores (o Instagram muda frequentemente)
     const possibleSelectors = [
       'article a[href*="/p/"]',
       'a[href*="/p/"] img',
       'div[role="button"] a[href*="/p/"]',
       'main article a[href*="/p/"]',
-      'article > div a[href*="/p/"]'
+      'article > div a[href*="/p/"]',
+      'a[href*="/reel/"]',
+      'a[href*="/p/"]'
     ];
     
     let posts = null;
