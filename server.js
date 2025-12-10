@@ -186,29 +186,11 @@ app.get('/api/instagram/:username', async (req, res) => {
       return res.json(response);
     }
     
-    // Se não encontrou posts, usar fallback com embed
-    console.log(`⚠️ Nenhum post encontrado com scraping, usando fallback embed`);
-    
-    const fallbackResponse = {
-      success: true,
-      post: {
-        shortcode: 'C-sNvdXOMzi', // Post fixo de exemplo
-        media_url: '',
-        permalink: `https://www.instagram.com/${username}/`,
-        caption: `Último post do @${username}`,
-        timestamp: new Date().toISOString(),
-        useEmbed: true
-      },
-      source: 'Fallback Embed'
-    };
-    
-    // Salvar no cache
-    cache.set(cacheKey, {
-      data: fallbackResponse,
-      timestamp: Date.now()
+    console.log(`❌ Nenhum post encontrado para @${username}`);
+    return res.status(404).json({
+      success: false,
+      error: 'Nenhum post encontrado'
     });
-    
-    return res.json(fallbackResponse);
     
   } catch (error) {
     console.error(`❌ Erro ao buscar posts:`, error.message);
@@ -217,18 +199,9 @@ app.get('/api/instagram/:username', async (req, res) => {
       await browser.close().catch(() => {});
     }
     
-    // Retornar fallback em caso de erro
-    return res.json({
-      success: true,
-      post: {
-        shortcode: 'C-sNvdXOMzi',
-        media_url: '',
-        permalink: `https://www.instagram.com/${username}/`,
-        caption: `Último post do @${username}`,
-        timestamp: new Date().toISOString(),
-        useEmbed: true
-      },
-      source: 'Error Fallback'
+    return res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
