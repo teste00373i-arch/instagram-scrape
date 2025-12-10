@@ -95,6 +95,7 @@ app.get('/api/instagram/:username', async (req, res) => {
     }
     
     // MÉTODO 2: Scraping com Playwright (fallback)
+    console.log('🔄 Tentando scraping com Playwright...');
     browser = await chromium.launch({
       headless: true,
       args: [
@@ -107,141 +108,83 @@ app.get('/api/instagram/:username', async (req, res) => {
     });
     
     const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      viewport: { width: 1920, height: 1080 }
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+      viewport: { width: 375, height: 812 },
+      locale: 'pt-BR',
+      timezoneId: 'America/Sao_Paulo'
     });
     
     const page = await context.newPage();
-    
-    // Configurar timeout
     page.setDefaultTimeout(30000);
     
     console.log(`🌐 Navegando para instagram.com/${username}...`);
     
     // Ir para o perfil do Instagram
     await page.goto(`https://www.instagram.com/${username}/`, {
-      waitUntil: 'networkidle',
+      waitUntil: 'domcontentloaded',
       timeout: 30000
     });
     
-    // Aguardar carregamento completo
-    await page.waitForTimeout(5000);
+    // Aguardar um pouco para carregar
+    await page.waitForTimeout(3000);
+    
+    // Tentar fechar modal de login se aparecer
+    try {
+      await page.click('button:has-text("Agora não")', { timeout: 2000 });
+      console.log('✅ Modal fechado');
+    } catch (e) {
+      console.log('⚠️ Sem modal para fechar');
+    }
+    
+    await page.waitForTimeout(2000);
     
     console.log(`📊 Tentando extrair dados da página...`);
     
-    // Debug: verificar estrutura HTML
-    const pageStructure = await page.evaluate(() => {
-      return {
-        hasArticle: !!document.querySelector('article'),
-        hasMain: !!document.querySelector('main'),
-        hasLinks: document.querySelectorAll('a').length,
-        hasImages: document.querySelectorAll('img').length,
-        title: document.title,
-        bodyText: document.body.innerText.substring(0, 500)
-      };
-    });
-    
-    console.log('🔍 Estrutura da página:', pageStructure);
-    
-    // Tentar extrair dados do script JSON do Instagram
-    const jsonData = await page.evaluate(() => {
-      const scripts = document.querySelectorAll('script[type="application/ld+json"]');
-      for (const script of scripts) {
-        try {
-          const data = JSON.parse(script.textContent);
-          if (data && data.mainEntityofPage) {
-            return data;
-          }
-        } catch (e) {}
-      }
+    // Tentar pegar dados do primeiro post direto
+    const posts = await page.evaluate(() => {
+      const results = [];
       
-      // Tentar pegar do __additionalDataLoaded__
-      if (window._sharedData) {
-        return window._sharedData;
-      }
+      // Procurar por qualquer link que tenha /p/ ou /reel/
+      const allLinks = Array.from(document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]'));
       
-      return null;
-    });
-    
-    console.log(`📦 Dados JSON extraídos:`, jsonData ? 'Sim' : 'Não');
-    
-    // Debug: screenshot para análise
-    try {
-      await page.screenshot({ path: 'debug-instagram.png', fullPage: false });
-      console.log('📸 Screenshot salvo em debug-instagram.png');
-    } catch (e) {
-      console.log('⚠️ Não foi possível salvar screenshot');
-    }
-    
-    // Tentar múltiplos seletores (o Instagram muda frequentemente)
-    const possibleSelectors = [
-      'article a[href*="/p/"]',
-      'a[href*="/p/"] img',
-      'div[role="button"] a[href*="/p/"]',
-      'main article a[href*="/p/"]',
-      'article > div a[href*="/p/"]',
-      'a[href*="/reel/"]',
-      'a[href*="/p/"]'
-    ];
-    
-    let posts = null;
-    
-    for (const selector of possibleSelectors) {
-      try {
-        console.log(`🔍 Tentando seletor: ${selector}`);
-        await page.waitForSelector(selector, { timeout: 5000 });
+      console.log(`Encontrados ${allLinks.length} links de posts/reels`);
+      
+      for (const link of allLinks.slice(0, 5)) {
+        const href = link.getAttribute('href');
+        const match = href?.match(/\/(p|reel)\/([^\/]+)/);
         
-        posts = await page.evaluate((sel) => {
-          const links = document.querySelectorAll(sel);
-          console.log(`Encontrados ${links.length} links com seletor ${sel}`);
-          const results = [];
+        if (match) {
+          const shortcode = match[2];
           
-          for (let i = 0; i < Math.min(3, links.length); i++) {
-            const element = links[i];
-            
-            // Se o elemento for img, pegar o link pai
-            const link = element.tagName === 'IMG' ? element.closest('a') : element;
-            
-            if (!link) continue;
-            
-            const href = link.getAttribute('href');
-            const shortcode = href?.match(/\/p\/([^\/]+)/)?.[1];
-            
-            if (shortcode) {
-              // Tentar pegar thumbnail de várias formas
-              let img = element.tagName === 'IMG' ? element : link.querySelector('img');
-              let media_url = img?.src;
-              
-              // Se não tiver src válido, tentar srcset
-              if (!media_url || media_url.includes('data:image') || media_url.length < 50) {
-                const srcset = img?.getAttribute('srcset');
-                if (srcset) {
-                  const urls = srcset.split(',').map(s => s.trim().split(' ')[0]);
-                  media_url = urls[urls.length - 1]; // Pegar a maior resolução
-                }
-              }
-              
-              results.push({
-                shortcode,
-                media_url: media_url || `https://www.instagram.com/p/${shortcode}/media/?size=l`,
-                permalink: `https://www.instagram.com/p/${shortcode}/`,
-                caption: img?.alt || 'Post do Instagram',
-                timestamp: new Date().toISOString()
-              });
+          // Tentar pegar imagem de diferentes formas
+          let img = link.querySelector('img');
+          let media_url = img?.src;
+          
+          // Verificar srcset
+          if (img && (!media_url || media_url.includes('data:') || media_url.length < 50)) {
+            const srcset = img.getAttribute('srcset');
+            if (srcset) {
+              const urls = srcset.split(',').map(s => s.trim().split(' ')[0]);
+              media_url = urls[urls.length - 1];
             }
           }
           
-          return results;
-        }, selector);
-        
-        if (posts && posts.length > 0) {
-          console.log(`✅ ${posts.length} posts encontrados usando seletor: ${selector}`);
-          break;
+          if (shortcode && media_url && !media_url.includes('data:')) {
+            results.push({
+              shortcode,
+              media_url,
+              permalink: `https://www.instagram.com/${match[1]}/${shortcode}/`,
+              caption: img?.alt || 'Post do Instagram',
+              timestamp: new Date().toISOString()
+            });
+          }
         }
-      } catch (err) {
-        console.log(`⚠️ Seletor ${selector} não funcionou, tentando próximo...`);
       }
-    }
+      
+      return results;
+    });
+    
+    console.log(`📦 Posts encontrados: ${posts?.length || 0}`);
     
     await browser.close();
     
